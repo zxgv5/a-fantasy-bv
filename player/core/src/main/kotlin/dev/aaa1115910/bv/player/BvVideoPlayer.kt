@@ -1,13 +1,14 @@
 package dev.aaa1115910.bv.player
 
-import android.graphics.Matrix
 import android.view.SurfaceView
-import android.view.TextureView
 import androidx.annotation.OptIn
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -17,8 +18,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.effect.MatrixTransformation
+import androidx.media3.effect.ScaleAndRotateTransformation
 import com.kuaishou.akdanmaku.ui.DanmakuPlayer
 import dev.aaa1115910.bv.player.impl.exo.ExoMediaPlayer
+import dev.aaa1115910.bv.util.ifElse
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -45,82 +49,51 @@ fun BvVideoPlayer(
 
     when (videoPlayer) {
         is ExoMediaPlayer -> {
-            var textureView: TextureView? by remember { mutableStateOf(null) }
             var surfaceView: SurfaceView? by remember { mutableStateOf(null) }
             var lastRotationDegrees by remember { mutableFloatStateOf(rotationDegrees) }
 
             fun clearVideoView() {
                 surfaceView?.let {
                     videoPlayer.mPlayer?.clearVideoSurfaceView(it)
-                }
-                textureView?.let {
-                    videoPlayer.mPlayer?.clearVideoTextureView(it)
+                    surfaceView = null
                 }
             }
 
-            if (rotationDegrees != 0f) {
-                fun applyTextureTransform(tv: TextureView?, degreesRaw: Float) {
-                    tv ?: return
-                    if (rotationDegrees != lastRotationDegrees) {
-                        val time = videoPlayer.currentPosition
-                        videoPlayer.stop()
-                        lastRotationDegrees = rotationDegrees
-                        tv.postDelayed({
-                            val viewWidth = tv.width.toFloat()
-                            val viewHeight = tv.height.toFloat()
 
-                            val pivotX = viewWidth / 2f
-                            val pivotY = viewHeight / 2f
-                            val matrix = Matrix().apply {
-                                // 旋转
-                                setRotate(rotationDegrees, pivotX, pivotY)
-
-                                if (rotationDegrees == 90f || rotationDegrees == -90f) {
-                                    // 缩放（使内容适配反转后的宽高比）
-                                    val scale = minOf(
-                                        screenHeight / viewWidth,
-                                        screenWidth / viewHeight
-                                    )
-                                    // 以中心缩放，需先将缩放偏移到中心
-                                    postScale(scale, scale, pivotX, pivotY)
-                                }
-                            }
-                            tv.setTransform(matrix)
-
-                            videoPlayer.mPlayer?.setVideoTextureView(tv)
-                            videoPlayer.prepare()
-                            videoPlayer.seekTo(time)
-                            danmakuPlayer?.seekTo(time)
-                            danmakuPlayer?.pause()
-                            videoPlayer.start()
-                        }, 50L)
-                    }
-                }
-
+            // SurfaceView 渲染
+            key(rotationDegrees) {
                 AndroidView(
-                    modifier = modifier.fillMaxSize(),
-                    factory = { ctx ->
-                        clearVideoView()
-                        TextureView(ctx).also { tv ->
-                            textureView = tv
-                            videoPlayer.mPlayer?.setVideoTextureView(tv)
-                            // 切换到 TextureView 当帧即尝试应用旋转
-                            applyTextureTransform(tv, rotationDegrees)
-                        }
-                    },
-                    update = { tv ->
-                        applyTextureTransform(tv, rotationDegrees)
-                    }
-                )
-            } else {
-                // SurfaceView 渲染
-                AndroidView(
-                    modifier = modifier.fillMaxSize(),
+                    modifier = modifier
+//                    .ifElse(
+//                        rotationDegrees == 90f || rotationDegrees == -90f,
+//                        Modifier.fillMaxWidth(),
+//                        Modifier.fillMaxHeight()
+//                    )
+                        .fillMaxHeight(),
                     factory = { ctx ->
                         clearVideoView()
                         SurfaceView(ctx).also { sv ->
                             surfaceView = sv
                             videoPlayer.mPlayer?.setVideoSurfaceView(sv)
+                        }
+                    },
+                    update = { sv ->
+                        if (rotationDegrees != lastRotationDegrees) {
+                            val time = videoPlayer.currentPosition
+                            videoPlayer.stop()
+                            lastRotationDegrees = rotationDegrees
+
+                            val rotateEffect = ScaleAndRotateTransformation.Builder()
+                                .setRotationDegrees(-rotationDegrees)
+                                .build()
+                            videoPlayer.mPlayer?.setVideoEffects(listOf(rotateEffect))
+
+
+                            videoPlayer.prepare()
+                            videoPlayer.seekTo(time)
+                            danmakuPlayer?.seekTo(time)
+                            danmakuPlayer?.pause()
+                            videoPlayer.start()
                         }
                     }
                 )
@@ -129,8 +102,6 @@ fun BvVideoPlayer(
             DisposableEffect(videoPlayer) {
                 onDispose {
                     clearVideoView()
-                    textureView = null
-                    surfaceView = null
                 }
             }
         }
